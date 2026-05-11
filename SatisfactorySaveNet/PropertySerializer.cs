@@ -85,9 +85,10 @@ public class PropertySerializer : IPropertySerializer
             if (string.Equals(propertyName, "None", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(propertyName))
                 return null;
 
-            // v1.2+ complete-tag format. Read the full tag and skip the value bytes —
-            // deep per-type parsing is a follow-up; this keeps the stream aligned so
-            // miner / smelter / belt counts and positions remain usable today.
+            // v1.2+ complete-tag format. Read the full tag, then either deep-parse the
+            // value (for the handful of property types the planner cares about — Object
+            // refs, arrays of Object refs, and strings) or skip the value bytes.
+            // The stream stays aligned either way.
             if (saveVersion >= SerializeDataPackageVersionAndCustomVersions)
             {
                 var tagNode = ReadPropertyTagNode(reader);
@@ -101,10 +102,8 @@ public class PropertySerializer : IPropertySerializer
                     propertyGuid = new System.Guid(guidBytes);
                 }
 
-                if (binarySize > 0)
-                    _ = reader.ReadBytes(binarySize);
-
-                return new RawProperty
+                var posBeforeValue = reader.BaseStream.Position;
+                var raw = new RawProperty
                 {
                     Name = propertyName,
                     Index = index,
@@ -114,6 +113,21 @@ public class PropertySerializer : IPropertySerializer
                     Flags = flags,
                     PropertyGuid = propertyGuid
                 };
+
+                if (binarySize > 0)
+                    TryParseKnownValue(reader, raw, binarySize);
+
+                // Always end up at posBeforeValue + binarySize regardless of how (or
+                // whether) the value parsed. Catches read-too-few and read-too-many bugs
+                // in the targeted parsers without throwing.
+                var expected = posBeforeValue + binarySize;
+                var diff = expected - reader.BaseStream.Position;
+                if (diff > 0)
+                    reader.BaseStream.Seek(diff, SeekOrigin.Current);
+                else if (diff < 0)
+                    reader.BaseStream.Seek(diff, SeekOrigin.Current);
+
+                return raw;
             }
 
             type = _stringSerializer.Deserialize(reader);
@@ -162,6 +176,58 @@ public class PropertySerializer : IPropertySerializer
         for (var i = 0; i < count; i++)
             children[i] = ReadPropertyTagNode(reader);
         return new FPropertyTagNode { Name = name, Children = children };
+    }
+
+    /// <summary>
+    /// Targeted value parser for the v1.2 RawProperty path. Reads the value bytes when
+    /// the type is one we care about for the planner (object refs, arrays of object
+    /// refs, strings); otherwise leaves the reader untouched and relies on the caller
+    /// to skip <paramref name="binarySize"/> bytes.
+    /// </summary>
+    private void TryParseKnownValue(BinaryReader reader, RawProperty raw, int binarySize)
+    {
+        switch (raw.Type)
+        {
+            case "ObjectProperty":
+                raw.ObjectValue = ReadObjectRef(reader);
+                break;
+
+            case "StrProperty":
+            case "NameProperty":
+                raw.StringValue = _stringSerializer.Deserialize(reader);
+                break;
+
+            case "ArrayProperty" when raw.TypeNode is { Children.Count: > 0 }
+                                  && IsObjectRefChild(raw.TypeNode.Children):
+            {
+                var elementCount = reader.ReadInt32();
+                if (elementCount < 0 || elementCount > 1_000_000)
+                    return; // refuse to allocate insane arrays — keep stream aligned via caller
+                var values = new ObjectReferenceValue[elementCount];
+                for (var i = 0; i < elementCount; i++)
+                    values[i] = ReadObjectRef(reader);
+                raw.ArrayObjectValues = values;
+                break;
+            }
+
+            default:
+                // Unknown / unparsed — caller seeks past `binarySize` bytes.
+                break;
+        }
+    }
+
+    private ObjectReferenceValue ReadObjectRef(BinaryReader reader)
+    {
+        var levelName = _stringSerializer.Deserialize(reader);
+        var pathName = _stringSerializer.Deserialize(reader);
+        return new ObjectReferenceValue(levelName, pathName);
+    }
+
+    private static bool IsObjectRefChild(ICollection<FPropertyTagNode> children)
+    {
+        foreach (var c in children)
+            return c.Name == "ObjectProperty";
+        return false;
     }
 
     private ArrayPropertyBase DeserializeArrayProperty(BinaryReader reader, Header header, string type, int count)
