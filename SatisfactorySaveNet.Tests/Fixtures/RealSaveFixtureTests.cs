@@ -64,6 +64,7 @@ public class RealSaveFixtureTests
 
     private const string EmptyWorldFile = ExpectedSessionName + " - Empty World.sav";
     private const string TheHubFile = ExpectedSessionName + " - The Hub.sav";
+    private const string PedestalFile = ExpectedSessionName + " - Pedestal.sav";
 
     [Test]
     public void Fixture_V12_EmptyWorld_HasExpectedShape()
@@ -103,6 +104,38 @@ public class RealSaveFixtureTests
         var emptyTotal = ((BodyV8)emptySave.Body!).Levels.Sum(l => l.Objects.Count);
         totalObjects.Should().BeGreaterThan(emptyTotal,
             "placing The Hub must yield strictly more parsed objects than an empty world");
+    }
+
+    /// <summary>
+    /// The Pedestal fixture is a deliberately minimal but non-empty base: a small
+    /// foundation structure in an otherwise pristine v1.2 world. It exists to be
+    /// the "control" for differential tests — drop a single building onto a copy
+    /// of this save and the difference in parsed objects should be exactly the
+    /// building you added (plus its components). Future fixtures should follow
+    /// the naming pattern <c>Pedestal + &lt;Building&gt;.sav</c>.
+    /// </summary>
+    [Test]
+    public void Fixture_V12_Pedestal_HasExpectedShape()
+    {
+        var save = Serializer.Deserialize(Path.Combine(FixturesDirectory, PedestalFile));
+        var body = AssertCommonV12Shape(save, PedestalFile);
+
+        save.Header.PlayedSeconds.Should().Be(168);
+        body.Levels.Should().HaveCount(228,
+            "the pedestal fixture instantiates the same partition sublevels as a built world");
+
+        var totalObjects = body.Levels.Sum(l => l.Objects.Count);
+        TestContext.Out.WriteLine($"  TotalObjects  : {totalObjects}");
+        totalObjects.Should().Be(1295,
+            "Pedestal baseline — a small foundation structure adds 43 objects over Empty World");
+
+        // Differential invariant: Pedestal must always have strictly more parsed
+        // objects than Empty World. This is the contract that makes Pedestal a
+        // useful "control" for "Pedestal + <Building>" derivative fixtures.
+        var emptySave = Serializer.Deserialize(Path.Combine(FixturesDirectory, EmptyWorldFile));
+        var emptyTotal = ((BodyV8)emptySave.Body!).Levels.Sum(l => l.Objects.Count);
+        totalObjects.Should().BeGreaterThan(emptyTotal,
+            "the pedestal's foundation structure must yield more parsed objects than an empty world");
     }
 
     private static BodyV8 AssertCommonV12Shape(Abstracts.Model.SatisfactorySave save, string fixtureName)
