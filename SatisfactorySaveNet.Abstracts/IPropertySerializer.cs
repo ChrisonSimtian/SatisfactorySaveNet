@@ -7,6 +7,12 @@ namespace SatisfactorySaveNet.Abstracts;
 
 public interface IPropertySerializer
 {
-    public IEnumerable<Property> DeserializeProperties(BinaryReader reader, Header? header = null, string? type = null, long? expectedPosition = null);
-    public Property? DeserializeProperty(BinaryReader reader, Header? header = null, string? type = null);
+    /// <summary>
+    /// Deserializes the property list for one object. <paramref name="saveVersion"/> is
+    /// the per-object SaveCustomVersion captured from the data blob — used to gate the
+    /// v1.2+ FPropertyTag-complete-type-name format and the leading serializationControl byte.
+    /// </summary>
+    public IEnumerable<Property> DeserializeProperties(BinaryReader reader, Header? header = null, string? type = null, long? expectedPosition = null, int? saveVersion = null);
+
+    public Property? DeserializeProperty(BinaryReader reader, Header? header = null, string? type = null, int? saveVersion = null);
 }

@@ -47,13 +47,24 @@ public class PropertySerializer : IPropertySerializer
         _logger = loggerFactory.CreateLogger<PropertySerializer>() ?? NullLogger<PropertySerializer>.Instance;
     }
 
-    public IEnumerable<Property> DeserializeProperties(BinaryReader reader, Header? header = null, string? type = null, long? expectedPosition = null)
+    /// <summary>
+    /// SaveCustomVersion at which the FPropertyTag adopts its complete-type-name format
+    /// (and SaveObject.ParseData prefixes the property list with a serializationControl byte).
+    /// </summary>
+    private const int SerializeDataPackageVersionAndCustomVersions = 53;
+
+    public IEnumerable<Property> DeserializeProperties(BinaryReader reader, Header? header = null, string? type = null, long? expectedPosition = null, int? saveVersion = null)
     {
+        // At v1.2+, a one-byte serializationControl precedes the property list — mirrors
+        // SaveObject.ParseData in etothepii. Read and discard.
+        if (saveVersion >= SerializeDataPackageVersionAndCustomVersions && type == null)
+            _ = reader.ReadByte();
+
         if (expectedPosition != null && expectedPosition < reader.BaseStream.Position)
             yield break;
 
         Property? property;
-        while ((property = DeserializeProperty(reader, header, type)) != null)
+        while ((property = DeserializeProperty(reader, header, type, saveVersion)) != null)
         {
             yield return property;
 
@@ -63,7 +74,7 @@ public class PropertySerializer : IPropertySerializer
     }
 
     [return: NotNullIfNotNull(nameof(type))]
-    public Property? DeserializeProperty(BinaryReader reader, Header? header = null, string? type = null)
+    public Property? DeserializeProperty(BinaryReader reader, Header? header = null, string? type = null, int? saveVersion = null)
     {
         var propertyName = string.Empty;
 
@@ -73,6 +84,37 @@ public class PropertySerializer : IPropertySerializer
 
             if (string.Equals(propertyName, "None", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(propertyName))
                 return null;
+
+            // v1.2+ complete-tag format. Read the full tag and skip the value bytes —
+            // deep per-type parsing is a follow-up; this keeps the stream aligned so
+            // miner / smelter / belt counts and positions remain usable today.
+            if (saveVersion >= SerializeDataPackageVersionAndCustomVersions)
+            {
+                var tagNode = ReadPropertyTagNode(reader);
+                var binarySize = reader.ReadInt32();
+                var flags = reader.ReadByte();
+                var index = (flags & 0x1) != 0 ? reader.ReadInt32() : 0;
+                System.Guid? propertyGuid = null;
+                if ((flags & 0x2) != 0)
+                {
+                    var guidBytes = reader.ReadBytes(16);
+                    propertyGuid = new System.Guid(guidBytes);
+                }
+
+                if (binarySize > 0)
+                    _ = reader.ReadBytes(binarySize);
+
+                return new RawProperty
+                {
+                    Name = propertyName,
+                    Index = index,
+                    Type = tagNode.Name,
+                    TypeNode = tagNode,
+                    BinarySize = binarySize,
+                    Flags = flags,
+                    PropertyGuid = propertyGuid
+                };
+            }
 
             type = _stringSerializer.Deserialize(reader);
         }
@@ -105,6 +147,21 @@ public class PropertySerializer : IPropertySerializer
 
         property.Name = propertyName;
         return property;
+    }
+
+    /// <summary>
+    /// Reads the recursive FPropertyTagNode struct — a property's type name plus any
+    /// nested type info (e.g. ArrayProperty's element type, StructProperty's struct name).
+    /// Mirrors etothepii's FPropertyTagNode.read.
+    /// </summary>
+    private FPropertyTagNode ReadPropertyTagNode(BinaryReader reader)
+    {
+        var name = _stringSerializer.Deserialize(reader);
+        var count = reader.ReadInt32();
+        var children = new FPropertyTagNode[count];
+        for (var i = 0; i < count; i++)
+            children[i] = ReadPropertyTagNode(reader);
+        return new FPropertyTagNode { Name = name, Children = children };
     }
 
     private ArrayPropertyBase DeserializeArrayProperty(BinaryReader reader, Header header, string type, int count)

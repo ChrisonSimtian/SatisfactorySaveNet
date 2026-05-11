@@ -62,6 +62,19 @@ public class ObjectSerializer : IObjectSerializer
             obj.ObjectVersionData = _objectVersionDataSerializer.Deserialize(reader);
     }
 
+    /// <summary>
+    /// At v1.2+, the property list is followed by an Int32 flag and optional 16-byte GUID
+    /// before any class-specific extra data. We consume but don't yet expose either value.
+    /// </summary>
+    private static void ReadOptionalObjectGuid(BinaryReader reader, int objectSaveVersion)
+    {
+        if (objectSaveVersion < SerializeDataPackageVersionAndCustomVersions)
+            return;
+        var hasGuid = reader.ReadInt32() > 0;
+        if (hasGuid)
+            _ = reader.ReadBytes(16);
+    }
+
     private ActorObject DeserializeActor(BinaryReader reader, Header header, ActorObject actorObject)
     {
         var perObjectSaveVersion = header.SaveVersion;
@@ -101,10 +114,20 @@ public class ObjectSerializer : IObjectSerializer
             return actorObject;
         }
 
-        var properties = _propertySerializer.DeserializeProperties(reader, header, expectedPosition: expectedPosition).ToArray();
+        var properties = _propertySerializer.DeserializeProperties(reader, header, expectedPosition: expectedPosition, saveVersion: perObjectSaveVersion).ToArray();
 
         actorObject.Properties = properties;
-        actorObject.ExtraData = _extraDataSerializer.Deserialize(reader, actorObject.TypePath, header, expectedPosition);
+
+        // At v1.2+, the property list is followed by an Int32 hasGuid flag + optional GUID
+        // before any class-specific ExtraData. Mirrors SaveObject.ParseData in etothepii.
+        ReadOptionalObjectGuid(reader, perObjectSaveVersion);
+
+        // v1.2+: class-specific ExtraData layouts (Conveyor, PowerLine, Circuit, etc.) have
+        // diverged from the pre-1.2 format. Skipping for now — the missing-bytes handler
+        // below swallows whatever's left in the body envelope so the stream stays aligned.
+        // Per-class v1.2 ports land in a follow-up.
+        if (perObjectSaveVersion < SerializeDataPackageVersionAndCustomVersions)
+            actorObject.ExtraData = _extraDataSerializer.Deserialize(reader, actorObject.TypePath, header, expectedPosition);
 
         var missingBytes = expectedPosition - reader.BaseStream.Position;
 
@@ -135,8 +158,11 @@ public class ObjectSerializer : IObjectSerializer
         var binarySize = reader.ReadInt32();
         var positionStart = reader.BaseStream.Position;
 
-        var properties = _propertySerializer.DeserializeProperties(reader, header).ToArray();
+        var properties = _propertySerializer.DeserializeProperties(reader, header, saveVersion: perObjectSaveVersion).ToArray();
         componentObject.Properties = properties;
+
+        // At v1.2+, hasGuid + optional GUID between properties and class-specific ExtraData.
+        ReadOptionalObjectGuid(reader, perObjectSaveVersion);
 
         var expectedPosition = positionStart + binarySize;
         var missingBytes = expectedPosition - reader.BaseStream.Position;
