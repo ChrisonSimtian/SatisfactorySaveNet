@@ -1,0 +1,5 @@
+# Ignore every .sav by default — only the curated handcrafted fixtures (named with
+# the "SatisfactorySaveNet - " prefix) are tracked. Personal autosaves dropped here
+# for local debugging stay out of git history.
+*.sav
+!SatisfactorySaveNet - *.sav

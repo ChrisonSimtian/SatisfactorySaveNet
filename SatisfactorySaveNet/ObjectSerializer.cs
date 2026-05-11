@@ -53,7 +53,7 @@ public class ObjectSerializer : IObjectSerializer
     /// (the first Int32 of each object record at header.SaveVersion >= 41), not the
     /// level or header version.
     /// </summary>
-    private void ReadOptionalPostBodyVersionData(BinaryReader reader, ComponentObject obj, int objectSaveVersion)
+    internal void ReadOptionalPostBodyVersionData(BinaryReader reader, ComponentObject obj, int objectSaveVersion)
     {
         if (objectSaveVersion < SerializeDataPackageVersionAndCustomVersions)
             return;
@@ -66,7 +66,7 @@ public class ObjectSerializer : IObjectSerializer
     /// At v1.2+, the property list is followed by an Int32 flag and optional 16-byte GUID
     /// before any class-specific extra data. We consume but don't yet expose either value.
     /// </summary>
-    private static void ReadOptionalObjectGuid(BinaryReader reader, int objectSaveVersion)
+    internal static void ReadOptionalObjectGuid(BinaryReader reader, int objectSaveVersion)
     {
         if (objectSaveVersion < SerializeDataPackageVersionAndCustomVersions)
             return;
