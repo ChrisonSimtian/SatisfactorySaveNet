@@ -51,11 +51,24 @@ twenty fixture tests at once.
 
 ```
 Serializers/
-  BinaryReaderHelpers.cs                   ← test-only utility
-  FSaveObjectVersionDataSerializerTests.cs ← v1.2 (custom version 53+)
-  PropertySerializerV12Tests.cs            ← v1.2 property tag format
-  ObjectSerializerV12Tests.cs              ← v1.2 object-level helpers
-  SaveFileSerializerV12Tests.cs            ← entry-point guards
+  BinaryReaderHelpers.cs                       ← test-only utility
+  FSaveObjectVersionDataSerializerTests.cs     ← v1.2 (custom version 53+)
+  PropertySerializerV12Tests.cs                ← v1.2 property tag format
+  ObjectSerializerV12Tests.cs                  ← v1.2 object-level helpers
+  SaveFileSerializerV12Tests.cs                ← entry-point guards
+  StringSerializerTests.cs                     ← UTF-8 + Unicode + empty
+  HexSerializerTests.cs                        ← length-bounded byte→char
+  VectorSerializerTests.cs                     ← Vec/Quat/Color shapes
+  ObjectReferenceSerializerTests.cs            ← two-FString pair
+  SoftObjectReferenceSerializerTests.cs        ← three-FString shape
+  ChunkSerializerTests.cs                      ← four Int32 round-trip
+  ObjectHeaderSerializerTests.cs               ← Actor/Component + v51 Flags gate
+  PropertySerializerLegacyTests.cs             ← pre-v1.2 typed switch (v1.1 canary)
+  TypedDataSerializerVersionTests.cs           ← v41 double/float gate, v44 InventoryItem split
+  TypedDataSerializerSimpleTypesTests.cs       ← no-version-gate struct types
+  ExtraDataSerializerLegacyTests.cs            ← pre-v1.2 per-actor branches
+Compat/
+  VersionCompatibilityTests.cs                 ← cross-version dispatch canary
 ```
 
 ### The helper
@@ -296,3 +309,63 @@ branch), then capture a fixture (it pins the user-visible outcome). If you're
 fixing a parser bug: write the failing synthesised test from the malformed
 bytes, fix the production code, then add the offending save to `Fixtures/` to
 prevent the regression coming back.
+
+## v1.1 ↔ v1.2 compatibility canary
+
+The library has to keep parsing the stable v1.1 branch saves while the
+experimental v1.2 branch evolves. Since we have no v1.1 `.sav` fixture (would
+need a Satisfactory branch switch to capture), the v1.1 surface is locked in by
+**synthesised tests with `saveVersion < 53`** rather than a real fixture:
+
+- `PropertySerializerLegacyTests` — every legacy `Deserialize<Type>Property`
+  branch (Bool, Int, Int64, UInt32, UInt64, Float, Double, Int8, Byte both
+  modes, Name, Str, Object, SoftObject, Enum, Array of {Int, Str, Object, Bool,
+  Float, Double, Int64, Enum, Interface}, Text history-types 0 and 11) at
+  `saveVersion = 50`.
+- `ExtraDataSerializerLegacyTests` — Conveyor / PowerLine (incl. the
+  v33-40 cached-translation window) / Circuit / Vehicle (both cargo-block
+  sizes) / Locomotive / Blueprint / PlayerData (mode 248) / UnknownExtraData
+  fallback / DroneStation / ConveyorChainActor / LightweightBuildableSubsystem
+  empty shapes.
+- `Compat/VersionCompatibilityTests` — pins the *dispatch* logic at the v1.1↔v1.2
+  seam: legacy switch vs RawProperty at `saveVersion ∈ {52, 53}`, ObjectHeader
+  Flags gate at 50/51, TypedData Quat float/double gate at 40/41, CircuitData
+  leading-count gate at 52/53, ConveyorData payload gate at 53.
+
+If a v1.2 commit silently changes how the parser handles older saves, the
+**first failure will be in `VersionCompatibilityTests` or the legacy switch
+tests** — not after a customer reports a parse error against a v1.1 save.
+
+You can prove the canary works by running the deliberate-break sanity check —
+flip any `saveVersion >= 53` check in `PropertySerializer.cs` to `> 53` and at
+least one test fails immediately.
+
+## Current coverage baseline
+
+Run with `dotnet test --collect:"XPlat Code Coverage" --settings coverlet.runsettings.xml`
+and inspect the OpenCover XML. As of 2026-05-12, on the `SatisfactorySaveNet`
+implementation assembly:
+
+| File | Sequence | Branch |
+|---|---:|---:|
+| `FSaveObjectVersionDataSerializer.cs` | 100% | 100% |
+| `HeaderSerializer.cs` | 100% | 100% |
+| `ChunkSerializer.cs`, `HexSerializer.cs`, `StringSerializer.cs` | 100% | 100% |
+| `ObjectReferenceSerializer.cs`, `SoftObjectReferenceSerializer.cs` | 100% | 100% |
+| `ObjectHeaderSerializer.cs` | 100% | 100% |
+| `KnownConstants.cs` | 100% | 93% |
+| `ObjectSerializer.cs` | 93% | 86% |
+| `SaveFileSerializer.cs` | 88% | 71% |
+| `BodySerializer.cs` | 81% | 76% |
+| `VectorSerializer.cs` | 73% | 50% |
+| `PropertySerializer.cs` | 63% | 43% |
+| `ExtraDataSerializer.cs` | 52% | 56% |
+| `TypedDataSerializer.cs` | 34% | 17% |
+| **Module aggregate** | **~63%** | **~38%** |
+
+The 63% aggregate is below an 80% target because `TypedDataSerializer` is a
+fan-out dispatch over ~30 FicsItNetworks/Lua/FIR struct-types whose wire
+formats are not consistently documented. Adding synthesised tests for every
+one would be coverage chasing — most of them are best exercised by a real
+fixture that uses the corresponding mod, not by hand-built byte sequences.
+Treat 80% as aspirational; prioritise meaningful tests over chasing the number.
