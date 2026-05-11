@@ -18,4 +18,10 @@ public class ComponentObject
     public ExtraData? ExtraData { get; set; }
     public int? EntitySaveVersion { get; set; }
     public uint? Flags { get; set; }
+
+    /// <summary>
+    /// Per-object versioning struct serialized after the body at
+    /// <c>SaveCustomVersion.SerializeDataPackageVersionAndCustomVersions</c> (53). Null when absent.
+    /// </summary>
+    public FSaveObjectVersionData? ObjectVersionData { get; set; }
 }

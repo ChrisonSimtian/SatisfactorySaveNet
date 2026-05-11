@@ -100,7 +100,7 @@ public class PropertySerializer : IPropertySerializer
             nameof(DoubleProperty) => DeserializeDoubleProperty(reader),
             nameof(FINNetworkProperty) => DeserializeFINNetworkProperty(reader),
 
-            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, $"Unknown property type '{type}' (propertyName='{propertyName}', streamPos={reader.BaseStream.Position})")
         };
 
         property.Name = propertyName;

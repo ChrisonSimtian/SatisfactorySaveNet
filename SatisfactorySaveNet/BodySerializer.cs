@@ -7,19 +7,27 @@ namespace SatisfactorySaveNet;
 
 public class BodySerializer : IBodySerializer
 {
-    public static readonly IBodySerializer Instance = new BodySerializer(StringSerializer.Instance, ObjectHeaderSerializer.Instance, ObjectReferenceSerializer.Instance, ObjectSerializer.Instance);
+    /// <summary>
+    /// SaveCustomVersion at which non-persistent levels gain an optional level-wide
+    /// FSaveObjectVersionData block after the collectables list.
+    /// </summary>
+    private const int SerializeDataPackageVersionAndCustomVersions = 53;
+
+    public static readonly IBodySerializer Instance = new BodySerializer(StringSerializer.Instance, ObjectHeaderSerializer.Instance, ObjectReferenceSerializer.Instance, ObjectSerializer.Instance, FSaveObjectVersionDataSerializer.Instance);
 
     private readonly IStringSerializer _stringSerializer;
     private readonly IObjectHeaderSerializer _objectHeaderSerializer;
     private readonly IObjectReferenceSerializer _objectReferenceSerializer;
     private readonly IObjectSerializer _objectSerializer;
+    private readonly IFSaveObjectVersionDataSerializer _objectVersionDataSerializer;
 
-    public BodySerializer(IStringSerializer stringSerializer, IObjectHeaderSerializer objectHeaderSerializer, IObjectReferenceSerializer objectReferenceSerializer, IObjectSerializer objectSerializer)
+    public BodySerializer(IStringSerializer stringSerializer, IObjectHeaderSerializer objectHeaderSerializer, IObjectReferenceSerializer objectReferenceSerializer, IObjectSerializer objectSerializer, IFSaveObjectVersionDataSerializer objectVersionDataSerializer)
     {
         _stringSerializer = stringSerializer;
         _objectHeaderSerializer = objectHeaderSerializer;
         _objectReferenceSerializer = objectReferenceSerializer;
         _objectSerializer = objectSerializer;
+        _objectVersionDataSerializer = objectVersionDataSerializer;
     }
 
     public BodyBase Deserialize(BinaryReader reader, Header header)
@@ -145,7 +153,7 @@ public class BodySerializer : IBodySerializer
 
                 for (var j = 0; j < nrObjects; j++)
                 {
-                    objects[j] = _objectSerializer.Deserialize(reader, header, objects[j]);
+                    objects[j] = _objectSerializer.Deserialize(reader, header, objects[j], saveVersion);
                 }
 
                 var expectedPosition = positionStart + binarySizeObjects;
@@ -167,6 +175,16 @@ public class BodySerializer : IBodySerializer
                 for (var j = 0; j < nrSecondCollectables; j++)
                 {
                     secondCollectables[j] = _objectReferenceSerializer.Deserialize(reader);
+                }
+
+                // At SaveCustomVersion 53+, non-persistent levels write an optional level-wide
+                // FSaveObjectVersionData block after the collectables list. Mirrors etothepii's
+                // Level.Read for the non-persistent branch.
+                if (i != nrLevels && saveVersion >= SerializeDataPackageVersionAndCustomVersions)
+                {
+                    var shouldSerializeLevelVersionData = reader.ReadInt32() == 1;
+                    if (shouldSerializeLevelVersionData)
+                        _ = _objectVersionDataSerializer.Deserialize(reader);
                 }
 
 #pragma warning disable CS0618 // Type or member is obsolete
