@@ -122,11 +122,15 @@ public class ObjectSerializer : IObjectSerializer
         // before any class-specific ExtraData. Mirrors SaveObject.ParseData in etothepii.
         ReadOptionalObjectGuid(reader, perObjectSaveVersion);
 
-        // v1.2+: class-specific ExtraData layouts (Conveyor, PowerLine, Circuit, etc.) have
-        // diverged from the pre-1.2 format. Skipping for now — the missing-bytes handler
-        // below swallows whatever's left in the body envelope so the stream stays aligned.
-        // Per-class v1.2 ports land in a follow-up.
-        if (perObjectSaveVersion < SerializeDataPackageVersionAndCustomVersions)
+        // v1.2+: most class-specific ExtraData layouts diverged from pre-1.2. We run the
+        // ExtraData parser for the classes whose v1.2 format we've ported (Conveyor belts
+        // + lifts, PowerLine, CircuitSubsystem); for everything else we skip and let the
+        // missing-bytes handler below absorb the remainder.
+        var v12 = perObjectSaveVersion >= SerializeDataPackageVersionAndCustomVersions;
+        var extraDataPortedAtV12 = KnownConstants.IsConveyor(actorObject.TypePath)
+                                || KnownConstants.IsPowerLine(actorObject.TypePath)
+                                || actorObject.TypePath == "/Game/FactoryGame/-Shared/Blueprint/BP_CircuitSubsystem.BP_CircuitSubsystem_C";
+        if (!v12 || extraDataPortedAtV12)
             actorObject.ExtraData = _extraDataSerializer.Deserialize(reader, actorObject.TypePath, header, expectedPosition);
 
         var missingBytes = expectedPosition - reader.BaseStream.Position;
