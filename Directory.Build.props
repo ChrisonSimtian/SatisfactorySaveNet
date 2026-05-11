@@ -2,7 +2,7 @@
     <PropertyGroup>
         <Company>R3dByt3</Company>
         <Copyright>R3dByt3</Copyright>
-        <Authors>R3dByt3</Authors>
+        <Authors>R3dByt3, ChrisonSimtian</Authors>
         <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
         <TargetFramework>net8.0</TargetFramework>
         <LangVersion>12.0</LangVersion>
@@ -11,7 +11,7 @@
         <IsPackable>false</IsPackable>
         <IsPublishable>false</IsPublishable>
 
-        <VersionPrefix>3.2.3</VersionPrefix>
+        <VersionPrefix>4.0.0</VersionPrefix>
         <Version Condition=" '$(VersionSuffix)' != '' ">$(VersionPrefix)-$(VersionSuffix)</Version>
         <Version Condition=" '$(VersionSuffix)' == '' ">$(VersionPrefix)</Version>
 
