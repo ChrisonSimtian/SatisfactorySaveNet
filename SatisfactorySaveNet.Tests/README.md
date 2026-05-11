@@ -221,16 +221,27 @@ across game builds; the *delta from Pedestal* is much more stable.
 1. In-game, load the appropriate base save (`Pedestal` for "+ Building"
    fixtures, otherwise a fresh world).
 2. Make the change (place exactly one building, build one belt loop, etc.).
-3. Save with the naming convention above and copy the `.sav` into `Fixtures/`.
-4. Run `dotnet test --filter Deserialize_DoesNotThrow` — the smoke test picks
+3. Save with the naming convention above (`SatisfactorySaveNet - v1.2 - <Scenario>`
+   in the in-game save dialog — the resulting `.sav` filename will match).
+4. Run `./Update-Fixtures.ps1` (Windows only). The script reads the
+   `ExpectedSessionName` constant from `RealSaveFixtureTests.cs`, then copies
+   every `<session-name> - *.sav` it finds under
+   `%LOCALAPPDATA%\FactoryGame\Saved\SaveGames` into `Fixtures/`. Pass
+   `-WhatIf` for a dry run. If the script reports duplicates, it takes the
+   most recently written copy.
+5. Run `dotnet test --filter Deserialize_DoesNotThrow` — the smoke test picks
    up the new file automatically. If it passes, the fixture is at least
    parseable. If it throws, you've found a parser bug; isolate it with a
    synthesised test before committing the fixture.
-5. Add a named-fixture `[Test]` method to `RealSaveFixtureTests`. Start with
+6. Add a named-fixture `[Test]` method to `RealSaveFixtureTests`. Start with
    just `AssertCommonV12Shape` + `TestContext.Out.WriteLine` of the counts.
-6. Run that single test once to read the observed values from the output.
-7. Bake those numbers into the assertions. Lock the absolute count *and* the
+7. Run that single test once to read the observed values from the output.
+8. Bake those numbers into the assertions. Lock the absolute count *and* the
    differential against Pedestal/EmptyWorld.
+
+If you bump the session name (e.g. for a new game version) update
+`ExpectedSessionName` in `RealSaveFixtureTests.cs` — both the C# tests and
+`Update-Fixtures.ps1` pick the change up automatically.
 
 ### Why the absolute counts are still asserted
 
