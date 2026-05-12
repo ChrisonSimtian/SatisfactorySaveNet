@@ -22,5 +22,12 @@ public enum PropertyConstraint
     Struct,
     Text,
     UInt32,
-    UInt64
+    UInt64,
+
+    /// <summary>
+    /// New v1.2+ property whose tag was parsed via FPropertyTag's complete-type-name
+    /// format but whose value bytes are not yet deeply deserialized. Stream-aligned
+    /// (binary size is consumed) but the value is opaque.
+    /// </summary>
+    Raw
 }

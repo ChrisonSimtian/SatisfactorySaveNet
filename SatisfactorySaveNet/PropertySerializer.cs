@@ -47,13 +47,24 @@ public class PropertySerializer : IPropertySerializer
         _logger = loggerFactory.CreateLogger<PropertySerializer>() ?? NullLogger<PropertySerializer>.Instance;
     }
 
-    public IEnumerable<Property> DeserializeProperties(BinaryReader reader, Header? header = null, string? type = null, long? expectedPosition = null)
+    /// <summary>
+    /// SaveCustomVersion at which the FPropertyTag adopts its complete-type-name format
+    /// (and SaveObject.ParseData prefixes the property list with a serializationControl byte).
+    /// </summary>
+    private const int SerializeDataPackageVersionAndCustomVersions = 53;
+
+    public IEnumerable<Property> DeserializeProperties(BinaryReader reader, Header? header = null, string? type = null, long? expectedPosition = null, int? saveVersion = null)
     {
+        // At v1.2+, a one-byte serializationControl precedes the property list — mirrors
+        // SaveObject.ParseData in etothepii. Read and discard.
+        if (saveVersion >= SerializeDataPackageVersionAndCustomVersions && type == null)
+            _ = reader.ReadByte();
+
         if (expectedPosition != null && expectedPosition < reader.BaseStream.Position)
             yield break;
 
         Property? property;
-        while ((property = DeserializeProperty(reader, header, type)) != null)
+        while ((property = DeserializeProperty(reader, header, type, saveVersion)) != null)
         {
             yield return property;
 
@@ -63,7 +74,7 @@ public class PropertySerializer : IPropertySerializer
     }
 
     [return: NotNullIfNotNull(nameof(type))]
-    public Property? DeserializeProperty(BinaryReader reader, Header? header = null, string? type = null)
+    public Property? DeserializeProperty(BinaryReader reader, Header? header = null, string? type = null, int? saveVersion = null)
     {
         var propertyName = string.Empty;
 
@@ -73,6 +84,51 @@ public class PropertySerializer : IPropertySerializer
 
             if (string.Equals(propertyName, "None", StringComparison.Ordinal) || string.IsNullOrWhiteSpace(propertyName))
                 return null;
+
+            // v1.2+ complete-tag format. Read the full tag, then either deep-parse the
+            // value (for the handful of property types the planner cares about — Object
+            // refs, arrays of Object refs, and strings) or skip the value bytes.
+            // The stream stays aligned either way.
+            if (saveVersion >= SerializeDataPackageVersionAndCustomVersions)
+            {
+                var tagNode = ReadPropertyTagNode(reader);
+                var binarySize = reader.ReadInt32();
+                var flags = reader.ReadByte();
+                var index = (flags & 0x1) != 0 ? reader.ReadInt32() : 0;
+                System.Guid? propertyGuid = null;
+                if ((flags & 0x2) != 0)
+                {
+                    var guidBytes = reader.ReadBytes(16);
+                    propertyGuid = new System.Guid(guidBytes);
+                }
+
+                var posBeforeValue = reader.BaseStream.Position;
+                var raw = new RawProperty
+                {
+                    Name = propertyName,
+                    Index = index,
+                    Type = tagNode.Name,
+                    TypeNode = tagNode,
+                    BinarySize = binarySize,
+                    Flags = flags,
+                    PropertyGuid = propertyGuid
+                };
+
+                if (binarySize > 0)
+                    TryParseKnownValue(reader, raw, binarySize);
+
+                // Always end up at posBeforeValue + binarySize regardless of how (or
+                // whether) the value parsed. Catches read-too-few and read-too-many bugs
+                // in the targeted parsers without throwing.
+                var expected = posBeforeValue + binarySize;
+                var diff = expected - reader.BaseStream.Position;
+                if (diff > 0)
+                    reader.BaseStream.Seek(diff, SeekOrigin.Current);
+                else if (diff < 0)
+                    reader.BaseStream.Seek(diff, SeekOrigin.Current);
+
+                return raw;
+            }
 
             type = _stringSerializer.Deserialize(reader);
         }
@@ -100,11 +156,284 @@ public class PropertySerializer : IPropertySerializer
             nameof(DoubleProperty) => DeserializeDoubleProperty(reader),
             nameof(FINNetworkProperty) => DeserializeFINNetworkProperty(reader),
 
-            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, $"Unknown property type '{type}' (propertyName='{propertyName}', streamPos={reader.BaseStream.Position})")
         };
 
         property.Name = propertyName;
         return property;
+    }
+
+    /// <summary>
+    /// Reads the recursive FPropertyTagNode struct — a property's type name plus any
+    /// nested type info (e.g. ArrayProperty's element type, StructProperty's struct name).
+    /// Mirrors etothepii's FPropertyTagNode.read.
+    /// </summary>
+    private FPropertyTagNode ReadPropertyTagNode(BinaryReader reader)
+    {
+        var name = _stringSerializer.Deserialize(reader);
+        var count = reader.ReadInt32();
+        var children = new FPropertyTagNode[count];
+        for (var i = 0; i < count; i++)
+            children[i] = ReadPropertyTagNode(reader);
+        return new FPropertyTagNode { Name = name, Children = children };
+    }
+
+    /// <summary>
+    /// Targeted value parser for the v1.2 RawProperty path. Reads typed values for
+    /// every property type where the read is a known fixed size (scalars + object refs
+    /// + arrays of object refs + strings). Variable-shape types (Struct, Map, Set,
+    /// Array of non-Object elements, Text) leave the value bytes opaque so the caller's
+    /// binary-size fence advances past them safely.
+    /// </summary>
+    private void TryParseKnownValue(BinaryReader reader, RawProperty raw, int binarySize)
+    {
+        switch (raw.Type)
+        {
+            // ---- scalars with fixed-size value bytes ----
+
+            case "IntProperty":
+                if (binarySize >= 4) raw.IntValue = reader.ReadInt32();
+                break;
+
+            case "UInt32Property":
+                if (binarySize >= 4) raw.UIntValue = reader.ReadUInt32();
+                break;
+
+            case "Int64Property":
+                if (binarySize >= 8) raw.LongValue = reader.ReadInt64();
+                break;
+
+            case "UInt64Property":
+                if (binarySize >= 8) raw.ULongValue = reader.ReadUInt64();
+                break;
+
+            case "Int8Property":
+                if (binarySize >= 1) raw.SByteValue = reader.ReadSByte();
+                break;
+
+            case "FloatProperty":
+                if (binarySize >= 4) raw.FloatValue = reader.ReadSingle();
+                break;
+
+            case "DoubleProperty":
+                if (binarySize >= 8) raw.DoubleValue = reader.ReadDouble();
+                break;
+
+            // BoolProperty has no value bytes at v1.2 — the boolean lives in tag flag
+            // bit 0x10. Set the value from raw.Flags here so callers don't have to know
+            // the encoding.
+            case "BoolProperty":
+                raw.BoolValue = (raw.Flags & 0x10) != 0;
+                break;
+
+            // ---- object refs ----
+
+            case "ObjectProperty":
+                raw.ObjectValue = ReadObjectRef(reader);
+                break;
+
+            case "StrProperty":
+            case "NameProperty":
+                raw.StringValue = _stringSerializer.Deserialize(reader);
+                break;
+
+            case "ArrayProperty" when raw.TypeNode is { Children.Count: > 0 }
+                                  && IsObjectRefChild(raw.TypeNode.Children):
+            {
+                var elementCount = reader.ReadInt32();
+                if (elementCount < 0 || elementCount > 1_000_000)
+                    return; // refuse to allocate insane arrays — keep stream aligned via caller
+                var values = new ObjectReferenceValue[elementCount];
+                for (var i = 0; i < elementCount; i++)
+                    values[i] = ReadObjectRef(reader);
+                raw.ArrayObjectValues = values;
+                break;
+            }
+
+            case "StructProperty":
+                // Fixed-size raw structs only. Unknown / property-list-shaped structs
+                // would need recursive property parsing which is too easy to mis-step
+                // on. The caller's fence advances past unrecognised struct types.
+                raw.StructValue = TryReadFixedStructValue(reader, raw, binarySize);
+                break;
+
+            case "MapProperty":
+                // Maps whose key AND value are both fixed-size primitives or framed
+                // strings. Composite keys/values (Struct/Array/Set) leave MapEntries
+                // null and the fence skips the bytes.
+                raw.MapEntries = TryReadSimpleMapEntries(reader, raw);
+                break;
+
+            default:
+                // Variable-shape (Set/Text/Byte/Enum/Array of non-Object) —
+                // caller seeks past `binarySize` bytes via the fence.
+                break;
+        }
+    }
+
+    // Fixed-size raw struct types — value bytes are a deterministic count for each.
+    // Anything not in this set is treated as unparsed (StructValue.Value == null).
+    private static readonly HashSet<string> KnownFixedStructTypes = new(StringComparer.Ordinal)
+    {
+        "Vector", "Rotator",
+        "Quat", "Vector4", "Vector4D",
+        "Vector2D",
+        "Box",
+        "LinearColor", "Color",
+        "IntPoint", "DateTime",
+        "Guid",
+        "TimerHandle", "SlateBrush",
+        "FluidBox",
+        "RailroadTrackPosition"
+    };
+
+    private StructValue TryReadFixedStructValue(BinaryReader reader, RawProperty raw, int binarySize)
+    {
+        var subType = First(raw.TypeNode?.Children)?.Name ?? "";
+        if (!KnownFixedStructTypes.Contains(subType))
+            return new StructValue(subType, null);   // fence skips binarySize bytes
+
+        var posBefore = reader.BaseStream.Position;
+        object? value;
+        try
+        {
+            value = subType switch
+            {
+                "Vector" or "Rotator"             => ReadDoubles(reader, 3),
+                "Quat" or "Vector4" or "Vector4D" => ReadDoubles(reader, 4),
+                "Vector2D"                        => ReadDoubles(reader, 2),
+                "Box"                             => (object)new BoxValue(ReadDoubles(reader, 3), ReadDoubles(reader, 3), reader.ReadByte() != 0),
+                "LinearColor"                     => ReadFloats(reader, 4),
+                "Color"                           => reader.ReadBytes(4),
+                "IntPoint" or "DateTime"          => (object)reader.ReadInt64(),
+                "Guid"                            => reader.ReadBytes(16),
+                "TimerHandle" or "SlateBrush"     => (object)_stringSerializer.Deserialize(reader),
+                "FluidBox"                        => (object)reader.ReadSingle(),
+                "RailroadTrackPosition" => new RailroadTrackPositionValue(
+                                                _stringSerializer.Deserialize(reader),
+                                                _stringSerializer.Deserialize(reader),
+                                                reader.ReadSingle(),
+                                                reader.ReadSingle()),
+                _ => null
+            };
+        }
+        catch (EndOfStreamException)
+        {
+            // Defensive: if the assumed size for a fixed struct didn't match the
+            // actual bytes (mod data, unknown version), rewind so the outer fence aligns.
+            reader.BaseStream.Seek(posBefore, SeekOrigin.Begin);
+            return new StructValue(subType, null);
+        }
+        return new StructValue(subType, value);
+    }
+
+    // Simple map key/value types — fixed-size primitives or framed strings only.
+    // Composite types (Struct/Array/Set, plus Maps-of-Maps) leave MapEntries null.
+    private static readonly HashSet<string> SimpleMapTypes = new(StringComparer.Ordinal)
+    {
+        "IntProperty", "Int64Property", "UInt32Property", "UInt64Property",
+        "ByteProperty", "BoolProperty", "FloatProperty", "DoubleProperty",
+        "StrProperty", "NameProperty", "EnumProperty",
+        "ObjectProperty", "SoftObjectProperty", "InterfaceProperty"
+    };
+
+    private IReadOnlyList<MapEntryValue>? TryReadSimpleMapEntries(BinaryReader reader, RawProperty raw)
+    {
+        if (raw.TypeNode is not { Children.Count: >= 2 }) return null;
+        var keyType   = ChildAt(raw.TypeNode.Children, 0)?.Name;
+        var valueType = ChildAt(raw.TypeNode.Children, 1)?.Name;
+        if (keyType is null || valueType is null) return null;
+        if (!SimpleMapTypes.Contains(keyType) || !SimpleMapTypes.Contains(valueType)) return null;
+
+        var posBefore = reader.BaseStream.Position;
+        try
+        {
+            var numToRemove = reader.ReadInt32();
+            if (numToRemove > 0) return null; // very rare; not yet supported
+
+            var elementCount = reader.ReadInt32();
+            if (elementCount is < 0 or > 1_000_000) return null;
+
+            var entries = new MapEntryValue[elementCount];
+            for (var i = 0; i < elementCount; i++)
+            {
+                var k = ReadSimpleMapKeyOrValue(reader, keyType);
+                var v = ReadSimpleMapKeyOrValue(reader, valueType);
+                if (k is null || v is null) return null;
+                entries[i] = new MapEntryValue(k, v);
+            }
+            return entries;
+        }
+        catch (EndOfStreamException)
+        {
+            reader.BaseStream.Seek(posBefore, SeekOrigin.Begin);
+            return null;
+        }
+    }
+
+    private object? ReadSimpleMapKeyOrValue(BinaryReader reader, string typeName) =>
+        typeName switch
+        {
+            "IntProperty"        => reader.ReadInt32(),
+            "Int64Property"      => reader.ReadInt64(),
+            "UInt32Property"     => reader.ReadUInt32(),
+            "UInt64Property"     => reader.ReadUInt64(),
+            "ByteProperty"       => reader.ReadByte(),
+            "BoolProperty"       => reader.ReadByte() != 0,
+            "FloatProperty"      => reader.ReadSingle(),
+            "DoubleProperty"     => reader.ReadDouble(),
+            "StrProperty"        => _stringSerializer.Deserialize(reader),
+            "NameProperty"       => _stringSerializer.Deserialize(reader),
+            "EnumProperty"       => _stringSerializer.Deserialize(reader),
+            "ObjectProperty"     => ReadObjectRef(reader),
+            "SoftObjectProperty" => ReadObjectRef(reader),
+            "InterfaceProperty"  => ReadObjectRef(reader),
+            _ => null
+        };
+
+    // ---- helpers ----
+
+    private static double[] ReadDoubles(BinaryReader reader, int n)
+    {
+        var arr = new double[n];
+        for (var i = 0; i < n; i++) arr[i] = reader.ReadDouble();
+        return arr;
+    }
+
+    private static float[] ReadFloats(BinaryReader reader, int n)
+    {
+        var arr = new float[n];
+        for (var i = 0; i < n; i++) arr[i] = reader.ReadSingle();
+        return arr;
+    }
+
+    private static FPropertyTagNode? First(ICollection<FPropertyTagNode>? children)
+    {
+        if (children is null) return null;
+        foreach (var c in children) return c;
+        return null;
+    }
+
+    private static FPropertyTagNode? ChildAt(ICollection<FPropertyTagNode>? children, int index)
+    {
+        if (children is null) return null;
+        var i = 0;
+        foreach (var c in children) { if (i++ == index) return c; }
+        return null;
+    }
+
+    private ObjectReferenceValue ReadObjectRef(BinaryReader reader)
+    {
+        var levelName = _stringSerializer.Deserialize(reader);
+        var pathName = _stringSerializer.Deserialize(reader);
+        return new ObjectReferenceValue(levelName, pathName);
+    }
+
+    private static bool IsObjectRefChild(ICollection<FPropertyTagNode> children)
+    {
+        foreach (var c in children)
+            return c.Name == "ObjectProperty";
+        return false;
     }
 
     private ArrayPropertyBase DeserializeArrayProperty(BinaryReader reader, Header header, string type, int count)

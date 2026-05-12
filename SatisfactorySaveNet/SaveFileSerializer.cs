@@ -9,7 +9,13 @@ namespace SatisfactorySaveNet;
 
 public class SaveFileSerializer : ISaveFileSerializer
 {
-    public static readonly ISaveFileSerializer Instance = new SaveFileSerializer(HeaderSerializer.Instance, ChunkSerializer.Instance, BodySerializer.Instance);
+    /// <summary>
+    /// SaveCustomVersion at which a save-level FSaveObjectVersionData block is written
+    /// after the body length and before the grid / level data.
+    /// </summary>
+    private const int SerializeDataPackageVersionAndCustomVersions = 53;
+
+    public static readonly ISaveFileSerializer Instance = new SaveFileSerializer(HeaderSerializer.Instance, ChunkSerializer.Instance, BodySerializer.Instance, FSaveObjectVersionDataSerializer.Instance);
 
     private const int BlockSize = 256 * 1024;
     private const int LargeBufferMultiple = 64 * 1024 * 1024;
@@ -30,12 +36,14 @@ public class SaveFileSerializer : ISaveFileSerializer
     private readonly IHeaderSerializer _headerSerializer;
     private readonly IChunkSerializer _chunkSerializer;
     private readonly IBodySerializer _bodySerializer;
+    private readonly IFSaveObjectVersionDataSerializer _objectVersionDataSerializer;
 
-    public SaveFileSerializer(IHeaderSerializer headerSerializer, IChunkSerializer chunkSerializer, IBodySerializer bodySerializer)
+    public SaveFileSerializer(IHeaderSerializer headerSerializer, IChunkSerializer chunkSerializer, IBodySerializer bodySerializer, IFSaveObjectVersionDataSerializer objectVersionDataSerializer)
     {
         _headerSerializer = headerSerializer;
         _chunkSerializer = chunkSerializer;
         _bodySerializer = bodySerializer;
+        _objectVersionDataSerializer = objectVersionDataSerializer;
     }
 
     public SatisfactorySave Deserialize(string path)
@@ -117,6 +125,14 @@ public class SaveFileSerializer : ISaveFileSerializer
 
             if (uncompressedSize != dataLength + offset)
                 throw new CorruptedSatisFactorySaveFileException("Umcompressed size mismatch detected");
+
+            // At SaveCustomVersion 53+, a save-level FSaveObjectVersionData block precedes the
+            // grid / level data. Mirrors etothepii's Parser.ParseSave for the post-decompression
+            // pre-body section. Read and discard for now — values are not exposed on the model yet.
+            if (header.SaveVersion >= SerializeDataPackageVersionAndCustomVersions)
+            {
+                _ = _objectVersionDataSerializer.Deserialize(bufferReader);
+            }
 
             body = _bodySerializer.Deserialize(bufferReader, header);
 

@@ -50,7 +50,7 @@ public class ExtraDataSerializer : IExtraDataSerializer
             "/Game/FactoryGame/-Shared/Blueprint/BP_GameState.BP_GameState_C" or "/Game/FactoryGame/-Shared/Blueprint/BP_GameMode.BP_GameMode_C" => DeserializeBlueprint(reader),
             "/Game/FactoryGame/Character/Player/BP_PlayerState.BP_PlayerState_C" => DeserializePlayerData(reader, expectedPosition),
             "/Game/FactoryGame/Buildable/Factory/DroneStation/BP_DroneTransport.BP_DroneTransport_C" => DeserializeDroneStation(reader, header, expectedPosition),
-            "/Game/FactoryGame/-Shared/Blueprint/BP_CircuitSubsystem.BP_CircuitSubsystem_C" => DeserializeCircuitData(reader),
+            "/Game/FactoryGame/-Shared/Blueprint/BP_CircuitSubsystem.BP_CircuitSubsystem_C" => DeserializeCircuitData(reader, header),
             "/Script/FactoryGame.FGLightweightBuildableSubsystem" => DeserializeLightweightBuildableSubsystem(reader, header),
             _ => DeserializeUnknownData(reader, header, typePath, expectedPosition),
         };
@@ -199,10 +199,19 @@ public class ExtraDataSerializer : IExtraDataSerializer
         return result;
     }
 
-    private CircuitData DeserializeCircuitData(BinaryReader reader)
+    private CircuitData DeserializeCircuitData(BinaryReader reader, Header header)
     {
-        var count = reader.ReadInt32();
+        // v1.2+ matches etothepii's CircuitSpecialProperties.Parse: a single Int32 count
+        // followed by `count` circuit records. Older saves prefixed the count with an
+        // additional Int32 of unknown purpose — preserved for backward compatibility.
+        var count = 0;
         var nrElements = reader.ReadInt32();
+        if (header.SaveVersion < 53)
+        {
+            count = nrElements;
+            nrElements = reader.ReadInt32();
+        }
+
         var circuits = new Circuit[nrElements];
 
         for (var x = 0; x < nrElements; x++)
@@ -510,6 +519,16 @@ public class ExtraDataSerializer : IExtraDataSerializer
 
     private ConveyorData DeserializeConveyor(BinaryReader reader, Header header)
     {
+        // v1.2+ refactored conveyor item storage onto the FGConveyorChainActor — per-belt
+        // ExtraData is now just a single Int32 zero (mirrors etothepii's
+        // ConveyorSpecialProperties.Parse). Items per belt are derivable from the chain
+        // actor that owns them, which is a separate per-chain decode and a follow-up.
+        if (header.SaveVersion >= 53)
+        {
+            _ = reader.ReadInt32();
+            return new ConveyorData { Count = 0, Items = [] };
+        }
+
         var count = reader.ReadInt32();
         var nrElements = reader.ReadInt32();
 
@@ -619,6 +638,24 @@ public class ExtraDataSerializer : IExtraDataSerializer
 
     private PowerLineData DeserializePowerLine(BinaryReader reader, Header header)
     {
+        // v1.2+ drops the leading count Int32 — etothepii's PowerLineSpecialProperties.Parse
+        // reads source + target ObjectReferences directly. Cached source/target
+        // translations (Vector3F) may follow when AddedCachedLocationsForWire is in play;
+        // we leave that detection to the older path and just return refs here.
+        if (header.SaveVersion >= 53)
+        {
+            var s = _objectReferenceSerializer.Deserialize(reader);
+            var t = _objectReferenceSerializer.Deserialize(reader);
+            return new PowerLineData
+            {
+                Count = 0,
+                Source = s,
+                Target = t,
+                SourceTranslation = null,
+                TargetTranslation = null
+            };
+        }
+
         var count = reader.ReadInt32();
         var source = _objectReferenceSerializer.Deserialize(reader);
         var target = _objectReferenceSerializer.Deserialize(reader);
