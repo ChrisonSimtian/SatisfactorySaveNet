@@ -131,11 +131,12 @@ meaningful and doesn't drift when the wire format changes.
 
 ## 5. Cover the still-untested v1.2+ ExtraData paths
 
-`ObjectSerializer.cs:130-132` shortlists Conveyor / PowerLine /
-CircuitSubsystem as the v1.2-ported ExtraData branches. Other actor classes
-silently skip ExtraData at v1.2+. As the rest of the v1.2 ExtraData formats
-are ported (Vehicle, Locomotive, DroneStation, Blueprint, PlayerData,
-LightweightBuildableSubsystem), add them to the `extraDataPortedAtV12` check
-AND add a synthesised-binary test for the v1.2 wire shape in
-`Serializers/ExtraDataSerializerV12Tests.cs` (new file, mirrors the existing
-`*LegacyTests.cs`).
+`ObjectSerializer.cs` shortlists Conveyor / ConveyorActor (chain) / PowerLine /
+CircuitSubsystem as the v1.2-ported ExtraData branches (chain-actor added in
+ChrisonSimtian fork; AnthorNet/SC-InteractiveMap's Read.js shows no wire-
+format change at v1.2). Other actor classes silently skip ExtraData at
+v1.2+. As the rest of the v1.2 ExtraData formats are ported (Vehicle,
+Locomotive, DroneStation, Blueprint, PlayerData, LightweightBuildableSubsystem),
+add them to the `extraDataPortedAtV12` check AND add a synthesised-binary
+test for the v1.2 wire shape in `Serializers/ExtraDataSerializerV12Tests.cs`
+(mirrors the existing `*LegacyTests.cs`).
