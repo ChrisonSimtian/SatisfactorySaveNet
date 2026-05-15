@@ -11,9 +11,13 @@
         <IsPackable>false</IsPackable>
         <IsPublishable>false</IsPublishable>
 
-        <VersionPrefix>4.0.0</VersionPrefix>
-        <Version Condition=" '$(VersionSuffix)' != '' ">$(VersionPrefix)-$(VersionSuffix)</Version>
-        <Version Condition=" '$(VersionSuffix)' == '' ">$(VersionPrefix)</Version>
+        <!--
+            Versioning is owned by Nerdbank.GitVersioning. version.json at the
+            repo root sets the baseline; Nerdbank populates $(Version),
+            $(AssemblyVersion), $(FileVersion), $(InformationalVersion), and
+            $(PackageVersion) from git height + publicReleaseRefSpec. The build
+            project opts out of NB.GV via Directory.Build.props inheritance.
+        -->
 
         <PublishRepositoryUrl>true</PublishRepositoryUrl>
         <DebugType>portable</DebugType>
@@ -26,6 +30,18 @@
 
     <ItemGroup>
         <None Include="$(ProjectDir)..\README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <!--
+        Apply Nerdbank.GitVersioning to every project under this Directory.Build.props
+        EXCEPT the NUKE build script itself — it lives in a separate one-off project
+        that we never publish and doesn't need version stamping.
+    -->
+    <ItemGroup Condition="'$(MSBuildProjectName)' != '_build'">
+        <PackageReference Include="Nerdbank.GitVersioning">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
     </ItemGroup>
 
     <ItemGroup Condition="$(MSBuildProjectName.EndsWith('Tests'))">
