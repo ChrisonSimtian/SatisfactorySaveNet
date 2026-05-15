@@ -7,8 +7,10 @@
     <PackageId>SatisfactorySaveNet</PackageId>
     <PackageTags>satisfactory serializier</PackageTags>
     <Description>Satisfactory save file reader (and soon TM writer)</Description>
-    <PackageProjectUrl>https://github.com/R3dByt3/SatisfactorySaveNet</PackageProjectUrl>
-    <PackageReleaseNotes>https://github.com/R3dByt3/SatisfactorySaveNet/releases</PackageReleaseNotes>
+    <PackageProjectUrl>https://github.com/ChrisonSimtian/SatisfactorySaveNet</PackageProjectUrl>
+    <PackageReleaseNotes>https://github.com/ChrisonSimtian/SatisfactorySaveNet/releases</PackageReleaseNotes>
+    <RepositoryUrl>https://github.com/ChrisonSimtian/SatisfactorySaveNet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
     <PackageReadmeFile>README.md</PackageReadmeFile>

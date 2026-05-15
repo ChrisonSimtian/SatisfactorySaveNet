@@ -1,0 +1,69 @@
+name: CI
+
+# Strategy:
+#  • Every push / PR: build + test + pack to artifacts/. Verifies the package
+#    can be produced but does NOT publish (the version is a CI prerelease).
+#  • Tag push matching `v*` (e.g. v4.1.0): same flow, plus push to GitHub
+#    Packages with the tag's version. NUKE picks the version from GITHUB_REF.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write   # required for the publish step on tags
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build, test, pack
+        # Test + Pack are siblings on Compile, so invoking both runs the full
+        # chain once: Restore → Compile → Test, then Compile → Pack (cached).
+        run: ./build.sh Test Pack --configuration Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkgs
+          path: artifacts/packages/*.nupkg
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Push to GitHub Packages
+        env:
+          # GITHUB_TOKEN has packages:write inside this repo's org context, so
+          # no separate PAT is needed for publishing to the fork's own Packages.
+          NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./build.sh Push \
+            --configuration Release \
+            --nuget-source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --nuget-api-key "$NUGET_API_KEY"
