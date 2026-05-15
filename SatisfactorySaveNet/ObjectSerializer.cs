@@ -127,7 +127,13 @@ public class ObjectSerializer : IObjectSerializer
         // + lifts, PowerLine, CircuitSubsystem); for everything else we skip and let the
         // missing-bytes handler below absorb the remainder.
         var v12 = perObjectSaveVersion >= SerializeDataPackageVersionAndCustomVersions;
+        // FGConveyorChainActor's ExtraData blob has the same wire format pre- and
+        // post-v1.2 (AnthorNet/SC-InteractiveMap's Read.js has no version branching
+        // for it), so we let the existing DeserializeConveyorChainActor handle both.
+        // Without this entry, v1.2 chain actors silently fall through to the missing-
+        // bytes absorber and consumers see empty ConveyorActors[].
         var extraDataPortedAtV12 = KnownConstants.IsConveyor(actorObject.TypePath)
+                                || KnownConstants.IsConveyorActor(actorObject.TypePath)
                                 || KnownConstants.IsPowerLine(actorObject.TypePath)
                                 || actorObject.TypePath == "/Game/FactoryGame/-Shared/Blueprint/BP_CircuitSubsystem.BP_CircuitSubsystem_C";
         if (!v12 || extraDataPortedAtV12)
