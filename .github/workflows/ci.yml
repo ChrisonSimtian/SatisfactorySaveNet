@@ -1,10 +1,11 @@
 name: CI
 
-# Strategy:
-#  • Every push / PR: build + test + pack to artifacts/. Verifies the package
-#    can be produced but does NOT publish (the version is a CI prerelease).
-#  • Tag push matching `v*` (e.g. v4.1.0): same flow, plus push to GitHub
-#    Packages with the tag's version. NUKE picks the version from GITHUB_REF.
+# Strategy (continuous publish from main, per ChrisonSimtian/ERP.Satisfactory#103):
+#  • Every push / PR: build + test + pack.
+#  • Push to main OR tag push matching v*: same flow, plus publish to GitHub
+#    Packages. Each main commit gets a fresh height-derived version from
+#    Nerdbank.GitVersioning, so versions march forward (4.0.5, 4.0.6, …) with
+#    no SkipDuplicate gaps. Tags remain optional checkpoints / backfill triggers.
 
 on:
   push:
@@ -45,7 +46,10 @@ jobs:
 
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Continuous-from-main: every main commit publishes. Tag pushes still
+    # publish (useful for backfilling from older commits). PR builds and
+    # workflow_dispatch runs skip publish.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
