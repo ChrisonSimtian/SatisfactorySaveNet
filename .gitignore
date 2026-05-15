@@ -353,3 +353,7 @@ MigrationBackup/
 .sonarlint/
 
 # Application specific
+# NUKE build
+.nuke/temp/
+build/bin/
+build/obj/
