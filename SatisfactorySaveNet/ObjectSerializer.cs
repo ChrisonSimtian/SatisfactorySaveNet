@@ -127,17 +127,32 @@ public class ObjectSerializer : IObjectSerializer
         // + lifts, PowerLine, CircuitSubsystem); for everything else we skip and let the
         // missing-bytes handler below absorb the remainder.
         var v12 = perObjectSaveVersion >= SerializeDataPackageVersionAndCustomVersions;
-        // FGConveyorChainActor's ExtraData blob has the same wire format pre- and
-        // post-v1.2 (AnthorNet/SC-InteractiveMap's Read.js has no version branching
-        // for it), so we let the existing DeserializeConveyorChainActor handle both.
-        // Without this entry, v1.2 chain actors silently fall through to the missing-
-        // bytes absorber and consumers see empty ConveyorActors[].
+        // FGConveyorChainActor's ExtraData blob was thought to have the same wire format
+        // pre- and post-v1.2 (AnthorNet/SC-InteractiveMap's Read.js has no version branching
+        // for it), but real Beta Game v1.2 saves show the format does diverge in cases the
+        // synthesized v1.2 tests don't exercise. We still try the parser optimistically;
+        // on failure we rewind and fall through to the missing-bytes absorber so consumers
+        // see an empty ConveyorActors[] rather than an EndOfStreamException.
         var extraDataPortedAtV12 = KnownConstants.IsConveyor(actorObject.TypePath)
                                 || KnownConstants.IsConveyorActor(actorObject.TypePath)
                                 || KnownConstants.IsPowerLine(actorObject.TypePath)
                                 || actorObject.TypePath == "/Game/FactoryGame/-Shared/Blueprint/BP_CircuitSubsystem.BP_CircuitSubsystem_C";
         if (!v12 || extraDataPortedAtV12)
-            actorObject.ExtraData = _extraDataSerializer.Deserialize(reader, actorObject.TypePath, header, expectedPosition);
+        {
+            var extraDataStart = reader.BaseStream.Position;
+            try
+            {
+                actorObject.ExtraData = _extraDataSerializer.Deserialize(reader, actorObject.TypePath, header, expectedPosition);
+            }
+            catch (EndOfStreamException ex) when (v12 && KnownConstants.IsConveyorActor(actorObject.TypePath))
+            {
+                _logger.LogWarning(ex,
+                    "ExtraData parse failed for v1.2 chain actor {TypePath} at offset {Offset}; falling back to missing-bytes absorption. Belt routing will degrade to point-only rendering.",
+                    actorObject.TypePath, extraDataStart);
+                actorObject.ExtraData = null;
+                reader.BaseStream.Seek(extraDataStart, SeekOrigin.Begin);
+            }
+        }
 
         var missingBytes = expectedPosition - reader.BaseStream.Position;
 
