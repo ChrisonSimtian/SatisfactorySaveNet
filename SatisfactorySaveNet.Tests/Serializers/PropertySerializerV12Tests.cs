@@ -274,6 +274,101 @@ public class PropertySerializerV12Tests
     }
 
     [Test]
+    public void DeserializeProperty_AtV12_ArrayOfStruct_ParsesElementsAsInnerPropertyLists()
+    {
+        // ArrayProperty<StructProperty> at v1.2: the inner-tag header that v1.1 carried
+        // before the element loop is gone — the struct subtype lives in TypeNode.Children[0]
+        // (e.g. "SplinePointData"). Value bytes are: int32 count, then `count` element
+        // bodies each a v1.2 property-list terminated by "None". No per-element
+        // serializationControl byte (those only prefix the outer object body).
+        using var stream = new System.IO.MemoryStream();
+        using var writer = new System.IO.BinaryWriter(stream);
+
+        // Outer property tag (v1.2): name, type tree {ArrayProperty -> StructProperty -> SplinePointData},
+        // binarySize, flags=0.
+        writer.WriteFString("mSplineData");
+        writer.WriteFString("ArrayProperty"); writer.Write(1);   // 1 child
+        writer.WriteFString("StructProperty"); writer.Write(1);  // 1 child
+        writer.WriteFString("SplinePointData"); writer.Write(0); // leaf
+
+        var binarySizeOffset = stream.Position;
+        writer.Write(0);                                          // binarySize placeholder
+        writer.Write((byte)0);                                    // flags
+
+        var valueStart = stream.Position;
+        writer.Write(2);                                          // count = 2 elements
+
+        // Element 1: a single inner IntProperty "Step" = 7, then "None" terminator.
+        writer.WriteFString("Step");
+        writer.WriteFString("IntProperty"); writer.Write(0);
+        writer.Write(4);                                          // inner binarySize
+        writer.Write((byte)0);                                    // inner flags
+        writer.Write(7);                                          // inner value
+        writer.WriteFString("None");
+
+        // Element 2: IntProperty "Step" = 11, "None"
+        writer.WriteFString("Step");
+        writer.WriteFString("IntProperty"); writer.Write(0);
+        writer.Write(4);
+        writer.Write((byte)0);
+        writer.Write(11);
+        writer.WriteFString("None");
+
+        var binarySize = (int)(stream.Position - valueStart);
+        stream.Position = binarySizeOffset;
+        writer.Write(binarySize);
+
+        // Sentinel after the value bytes — must survive untouched (fence ends here).
+        stream.Position = stream.Length;
+        writer.Write(0xABCD1234u);
+
+        stream.Position = 0;
+        using var reader = new System.IO.BinaryReader(stream);
+        var prop = (RawProperty)PropertySerializer.Instance.DeserializeProperty(reader, saveVersion: V12)!;
+
+        prop.Type.Should().Be("ArrayProperty");
+        prop.ArrayStructValues.Should().NotBeNull();
+        prop.ArrayStructValues!.Should().HaveCount(2);
+
+        prop.ArrayStructValues[0].Properties.Should().HaveCount(1);
+        ((RawProperty)prop.ArrayStructValues[0].Properties[0]).Name.Should().Be("Step");
+        ((RawProperty)prop.ArrayStructValues[0].Properties[0]).IntValue.Should().Be(7);
+
+        ((RawProperty)prop.ArrayStructValues[1].Properties[0]).IntValue.Should().Be(11);
+
+        reader.ReadUInt32().Should().Be(0xABCD1234u, "the outer fence must align after the element bodies");
+    }
+
+    [Test]
+    public void DeserializeProperty_AtV12_ArrayOfStruct_EmptyArray_ProducesEmptyValuesList()
+    {
+        using var stream = new System.IO.MemoryStream();
+        using var writer = new System.IO.BinaryWriter(stream);
+
+        writer.WriteFString("mSplineData");
+        writer.WriteFString("ArrayProperty"); writer.Write(1);
+        writer.WriteFString("StructProperty"); writer.Write(1);
+        writer.WriteFString("SplinePointData"); writer.Write(0);
+
+        var binarySizeOffset = stream.Position;
+        writer.Write(0);
+        writer.Write((byte)0);
+
+        var valueStart = stream.Position;
+        writer.Write(0);                                          // count = 0
+
+        var binarySize = (int)(stream.Position - valueStart);
+        stream.Position = binarySizeOffset;
+        writer.Write(binarySize);
+
+        stream.Position = 0;
+        using var reader = new System.IO.BinaryReader(stream);
+        var prop = (RawProperty)PropertySerializer.Instance.DeserializeProperty(reader, saveVersion: V12)!;
+
+        prop.ArrayStructValues.Should().NotBeNull().And.BeEmpty();
+    }
+
+    [Test]
     public void DeserializeProperties_AtV12_ReadsMultiplePropertiesThenStopsOnNone()
     {
         using var reader = MakeReader(w =>

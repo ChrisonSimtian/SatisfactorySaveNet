@@ -52,7 +52,18 @@ public class RawProperty : Property
     /// or framed string. Maps with composite key/value types leave this null and the
     /// value bytes are skipped via the binary-size fence.</summary>
     public IReadOnlyList<MapEntryValue>? MapEntries { get; set; }
+
+    /// <summary>Parsed elements when <see cref="Type"/> == "ArrayProperty" and the
+    /// element type is "StructProperty" (e.g. <c>Array&lt;Struct&lt;SplinePointData&gt;&gt;</c>
+    /// on pipes and similar route-carrying actors). Each entry exposes the inner
+    /// property list that makes up one struct element. The struct subtype name lives
+    /// in <see cref="FPropertyTagNode.Children"/> of <see cref="TypeNode"/>.</summary>
+    public IReadOnlyList<StructElementValue>? ArrayStructValues { get; set; }
 }
+
+/// <summary>One element of an <c>ArrayProperty&lt;StructProperty&gt;</c> — a list of
+/// inner properties (each itself a <see cref="RawProperty"/> at v1.2+).</summary>
+public sealed record StructElementValue(IReadOnlyList<Property> Properties);
 
 /// <summary>
 /// StructProperty value. <see cref="Value"/> is one of:
