@@ -115,7 +115,7 @@ public class PropertySerializer : IPropertySerializer
                 };
 
                 if (binarySize > 0)
-                    TryParseKnownValue(reader, raw, binarySize);
+                    TryParseKnownValue(reader, raw, binarySize, header);
 
                 // Always end up at posBeforeValue + binarySize regardless of how (or
                 // whether) the value parsed. Catches read-too-few and read-too-many bugs
@@ -185,7 +185,7 @@ public class PropertySerializer : IPropertySerializer
     /// Array of non-Object elements, Text) leave the value bytes opaque so the caller's
     /// binary-size fence advances past them safely.
     /// </summary>
-    private void TryParseKnownValue(BinaryReader reader, RawProperty raw, int binarySize)
+    private void TryParseKnownValue(BinaryReader reader, RawProperty raw, int binarySize, Header? header)
     {
         switch (raw.Type)
         {
@@ -247,6 +247,46 @@ public class PropertySerializer : IPropertySerializer
                 for (var i = 0; i < elementCount; i++)
                     values[i] = ReadObjectRef(reader);
                 raw.ArrayObjectValues = values;
+                break;
+            }
+
+            // ArrayProperty<StructProperty> at v1.2 — value bytes are int32 count
+            // followed by `count` element bodies, each a property-list terminated by
+            // "None". The inner property tags use the v1.2 complete-tag format. There
+            // is no per-element serializationControl byte (those only prefix the
+            // outer object body), and no inner-tag header — the struct subtype name
+            // is already in raw.TypeNode.Children[0].Name (e.g. "SplinePointData").
+            //
+            // Falls back gracefully on a misread: the outer binary-size fence skips
+            // any unread bytes, so consumers see ArrayStructValues == null rather
+            // than a stream desync.
+            case "ArrayProperty" when raw.TypeNode is { Children.Count: > 0 }
+                                  && IsStructChild(raw.TypeNode.Children):
+            {
+                var endPos = reader.BaseStream.Position + binarySize - 4;
+                var elementCount = reader.ReadInt32();
+                if (elementCount < 0 || elementCount > 1_000_000)
+                    return;
+                var elements = new List<StructElementValue>(elementCount);
+                try
+                {
+                    for (var i = 0; i < elementCount; i++)
+                    {
+                        var props = new List<Property>();
+                        Property? p;
+                        while (reader.BaseStream.Position < endPos
+                               && (p = DeserializeProperty(reader, header, saveVersion: SerializeDataPackageVersionAndCustomVersions)) != null)
+                        {
+                            props.Add(p);
+                        }
+                        elements.Add(new StructElementValue(props));
+                    }
+                    raw.ArrayStructValues = elements;
+                }
+                catch (EndOfStreamException)
+                {
+                    // Misaligned guess — leave ArrayStructValues null; outer fence recovers.
+                }
                 break;
             }
 
@@ -433,6 +473,13 @@ public class PropertySerializer : IPropertySerializer
     {
         foreach (var c in children)
             return c.Name == "ObjectProperty";
+        return false;
+    }
+
+    private static bool IsStructChild(ICollection<FPropertyTagNode> children)
+    {
+        foreach (var c in children)
+            return c.Name == "StructProperty";
         return false;
     }
 
