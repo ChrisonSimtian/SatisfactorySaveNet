@@ -15,7 +15,8 @@
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageVersion Include="NSubstitute" Version="5.3.0" />
     <PackageVersion Include="Nerdbank.GitVersioning" Version="3.7.115" />
-    <PackageVersion Include="Nuke.Common" Version="9.0.4" />
+    <!-- Resolved from ChrisonSimtian/nuke via GitHub Packages (see nuget.config). -->
+    <PackageVersion Include="Nuke.Common" Version="10.2.1" />
     <PackageVersion Include="NUnit" Version="4.4.0" />
     <PackageVersion Include="NUnit.Analyzers" Version="4.11.2">
       <PrivateAssets>all</PrivateAssets>
