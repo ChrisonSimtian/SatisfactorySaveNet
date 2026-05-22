@@ -30,8 +30,9 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          # Library projects target net8.0; the Nuke build host (build/_build.csproj)
-          # targets net10.0 since Nuke.Common 10.x ships net10.0 only.
+          # Library projects target net8.0; the Fallout build host
+          # (build/_build.csproj) targets net10.0 since Fallout.Common 10.x
+          # ships net10.0 only.
           dotnet-version: |
             8.0.x
             10.0.x
@@ -39,11 +40,6 @@ jobs:
       - name: Build, test, pack
         # Test + Pack are siblings on Compile, so invoking both runs the full
         # chain once: Restore → Compile → Test, then Compile → Pack (cached).
-        env:
-          # Restore needs to authenticate to nuget.pkg.github.com/ChrisonSimtian
-          # for the Nuke.* packages (see nuget.config). The workflow-level
-          # `packages: write` implicitly grants `read` for this token.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./build.sh Test Pack --configuration Release
 
       - uses: actions/upload-artifact@v4
@@ -74,10 +70,7 @@ jobs:
 
       - name: Push to GitHub Packages
         env:
-          # NUGET_API_KEY publishes the produced *.nupkg files. GITHUB_TOKEN is
-          # also needed at restore time (Nuke.* packages — see nuget.config).
-          # Same token in both roles; `packages: write` covers both.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # NUGET_API_KEY publishes the produced *.nupkg files to GitHub Packages.
           NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./build.sh Push \
