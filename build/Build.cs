@@ -1,11 +1,11 @@
-using Nuke.Common;
-using Nuke.Common.IO;
-using Nuke.Common.ProjectModel;
-using Nuke.Common.Tools.DotNet;
-using Nuke.Common.Utilities.Collections;
+using Fallout.Common;
+using Fallout.Common.IO;
+using Fallout.Common.ProjectModel;
+using Fallout.Common.Tools.DotNet;
+using Fallout.Common.Utilities.Collections;
 
 /// <summary>
-/// NUKE build for the SatisfactorySaveNet fork. Targets:
+/// Fallout build for the SatisfactorySaveNet fork. Targets:
 ///   <c>./build.sh Compile</c>  — restore + compile
 ///   <c>./build.sh Test</c>     — restore + compile + run NUnit tests
 ///   <c>./build.sh Pack</c>     — produce nupkg(s) in <c>artifacts/packages</c>
@@ -16,7 +16,7 @@ using Nuke.Common.Utilities.Collections;
 /// repo root — the build doesn't override <c>$(Version)</c>; MSBuild reads it
 /// from NB.GV which derives from git height + <c>publicReleaseRefSpec</c>.
 /// </summary>
-class Build : NukeBuild
+class Build : FalloutBuild
 {
     public static int Main() => Execute<Build>(x => x.Pack);
 
