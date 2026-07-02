@@ -115,7 +115,27 @@ public class PropertySerializer : IPropertySerializer
                 };
 
                 if (binarySize > 0)
-                    TryParseKnownValue(reader, raw, binarySize, header);
+                {
+                    try
+                    {
+                        TryParseKnownValue(reader, raw, binarySize, header);
+                    }
+                    catch (System.Exception)
+                    {
+                        // The targeted value parsers are best-effort and speculative:
+                        // they assume the v1.2 wire format, but a newer save (e.g. the
+                        // v54+ layout in save version 60) can shift an inner struct/array
+                        // element and make a nested read run off — surfacing as a bogus
+                        // negative string length (ArgumentOutOfRangeException) or an
+                        // EndOfStreamException. The binary-size fence immediately below is
+                        // the source of truth for where this property ends, so any such
+                        // misread is non-fatal: rewind to the value start, leave the typed
+                        // value unset, and let the fence skip the opaque bytes. This keeps
+                        // the whole save parseable on versions past the ported format
+                        // rather than aborting the entire body on one unrecognised value.
+                        reader.BaseStream.Seek(posBeforeValue, System.IO.SeekOrigin.Begin);
+                    }
+                }
 
                 // Always end up at posBeforeValue + binarySize regardless of how (or
                 // whether) the value parsed. Catches read-too-few and read-too-many bugs
